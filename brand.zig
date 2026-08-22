@@ -841,9 +841,13 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
         var seen_bytes: usize = 0;
         var todo_bytes: usize = 0;
         // todo is write-only here
+        var bucket_items: [65536]usize = undefined;
+        var unchanged_buckets: usize = 0;
         for (&seen, &todo, &seen_par, &parts, &parents, 0..65536) |*s, *t, *sp, *pt, *pr, top| {
             if (pt.items.len == 0) {
                 // nothing to be done
+                unchanged_buckets += 1;
+                bucket_items[top] = s.len;
                 seen_len += s.len;
                 seen_bytes += s.arr.items.len;
                 continue;
@@ -852,6 +856,7 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
             total += pt.items.len;
             try mergeStream8(alloc, @truncate(top), s, t, sp, pt.*, pr.*, &dupes);
             seen_len += s.len;
+            bucket_items[top] = s.len;
             todo_len += t.len;
             seen_bytes += s.arr.items.len;
             todo_bytes += t.arr.items.len;
@@ -859,6 +864,25 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
             pr.deinit(alloc);
         }
         const merge_dur = merge_start.untilNow(io, .awake).toNanoseconds();
+        // print distribution of changed/unchanged buckets
+        std.debug.print("{d: >5} buckets ({}%) were unchanged\n", .{ unchanged_buckets, unchanged_buckets * 100 / 65536 });
+        // print distribution of bucket sizes
+        std.sort.pdq(usize, bucket_items[0..65536], {}, std.sort.asc(usize));
+        var count: u16 = 0;
+        var last: usize = bucket_items[0]; // = 0 likely
+        var min_diff: usize = 1;
+        for (bucket_items[1..]) |sz| {
+            count += 1;
+            if (sz == last) continue;
+            // print stats
+            if (sz - last >= min_diff) {
+                std.debug.print("{d: >5} buckets ({}%) contained between {} and {} items\n", .{ count, @as(u64, count) * 100 / 65536, last, sz - 1 });
+                count = 0;
+                last = sz;
+                min_diff *= 2;
+            }
+        }
+        std.debug.print("{d: >5} buckets ({}%) contained between {} and {} items\n", .{ count, @as(u64, count) * 100 / 65536, last, bucket_items[65535] - 1 });
 
         std.debug.print("done merge (input dupes: {}% | {}/{}), deallocating\n", .{ dupes * 100 / total, dupes, total });
         const t_dur = t_start.untilNow(io, .awake).toNanoseconds();
