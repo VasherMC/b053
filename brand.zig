@@ -17,8 +17,8 @@ const Board = packed struct(u80) {
     facing: Facing,
     gray: Pos,
     pocket: u2, // empty/stairs/glass/tile
-    glass: u35, // set = tile/stairs
-    tiles: u35, // set = tile/glass
+    glass: u35, // bit set = unusual (walkable->solid instead of glass, unwalkable->stairs)
+    tiles: u35, // bit set = walkable (tile/glass)
 
     fn at(b: Board, p: Pos) u2 {
         if (p > 34) unreachable;
@@ -660,7 +660,14 @@ fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool 
 
 // split into function that can be parallelized
 fn mergeStream8(alloc: std.mem.Allocator, top: u16, seen: *compressedStream8, todo_out: *compressedStream8, seen_par: *std.ArrayList(Action), pt: std.ArrayList(u64), pr: std.ArrayList(Action), dupes: *usize) !void {
+    // Only called when pt.items.len > 0
+    if (pt.items.len == 0) unreachable;
     if (seen.len == 0 and pt.items.len == 0) return; // nop
+    if (pt.items.len == 0) {
+        // no items to add to this bucket, we can skip de/re-compressing
+        // TODO return new copy to avoid fragmentation / make memory access more sequential?
+        return;
+    }
     var new_stream: compressedStream8 = .empty;
     var seen_r = seen.reader();
     var seen_w = new_stream.writer();
