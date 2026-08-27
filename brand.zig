@@ -673,6 +673,22 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
             }
         }
         std.debug.print("{d: >5} buckets ({}%) contained between {} and {} items\n", .{ count, @as(u64, count) * 100 / 65536, last, bucket_items[65535] - 1 });
+        // diff stats
+        var diffs = [_]usize{0} ** 8;
+        var diffs2 = [_]usize{0} ** 8;
+        for (seen, 0..65536) |s, _| {
+            if (s.len <= 1) continue;
+            var sr = s.reader();
+            var c = sr.pop().?;
+            while (sr.pop()) |n| {
+                const d: u64 = n ^ c;
+                c = n;
+                diffs[(63 - @clz(d)) / 8] += 1;
+                if (s.len > 128) diffs2[(63 - @clz(d)) / 8] += 1;
+            }
+        }
+        std.debug.print("diff distribution (xor all): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs[0], diffs[1], diffs[2], diffs[3], diffs[4], diffs[5], diffs[6], diffs[7] });
+        std.debug.print("diff distribution (len>128): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs2[0], diffs2[1], diffs2[2], diffs2[3], diffs2[4], diffs2[5], diffs2[6], diffs2[7] });
 
         std.debug.print("done merge (input dupes: {}% | {}/{}), deallocating\n", .{ dupes * 100 / total, dupes, total });
         const t_dur = t_start.untilNow(io, .awake).toNanoseconds();
