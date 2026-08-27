@@ -251,17 +251,22 @@ const compressedStream8 = struct {
                 return std.mem.bytesToValue(u64, self.stream.*.arr.items[0..8]);
             }
             if (self.state == null) unreachable;
-            const diff = self.stream.*.arr.items[self.byte_offset];
+            var diff = self.stream.*.arr.items[self.byte_offset];
             // start at with high order bytes
-            var mask: u64 = 0;
+            var mask: u64 = diff; // Short case (non-zero): done
             var read_offset: usize = self.byte_offset + 1;
-            for (0..8) |bit_idx| {
-                mask <<= 8;
-                const bit = (diff >> @as(u3, @intCast(7 - bit_idx))) & 1;
-                if (bit == 1) {
-                    const byte = self.stream.*.arr.items[read_offset];
-                    read_offset += 1;
-                    mask |= byte;
+            if (diff == 0) {
+                // Long case: read the actual mapping mask
+                diff = self.stream.*.arr.items[read_offset];
+                read_offset += 1;
+                for (0..8) |bit_idx| {
+                    mask <<= 8;
+                    const bit = (diff >> @as(u3, @intCast(7 - bit_idx))) & 1;
+                    if (bit == 1) {
+                        const byte = self.stream.*.arr.items[read_offset];
+                        read_offset += 1;
+                        mask |= byte;
+                    }
                 }
             }
             self.next_offset = read_offset;
@@ -288,17 +293,22 @@ const compressedStream8 = struct {
             if (self.state == null) unreachable;
             // decompress
             // VPEXPANDB
-            const diff = self.stream.*.arr.items[self.byte_offset];
+            var diff = self.stream.*.arr.items[self.byte_offset];
             self.byte_offset += 1;
             // start at with high order bytes
-            var mask: u64 = 0;
-            for (0..8) |bit_idx| {
-                mask <<= 8;
-                const bit = (diff >> @as(u3, @intCast(7 - bit_idx))) & 1;
-                if (bit == 1) {
-                    const byte = self.stream.*.arr.items[self.byte_offset];
-                    self.byte_offset += 1;
-                    mask |= byte;
+            var mask: u64 = diff; // Short case (non-zero): done
+            if (diff == 0) {
+                // Long case: read the actual mapping mask
+                diff = self.stream.*.arr.items[self.byte_offset];
+                self.byte_offset += 1;
+                for (0..8) |bit_idx| {
+                    mask <<= 8;
+                    const bit = (diff >> @as(u3, @intCast(7 - bit_idx))) & 1;
+                    if (bit == 1) {
+                        const byte = self.stream.*.arr.items[self.byte_offset];
+                        self.byte_offset += 1;
+                        mask |= byte;
+                    }
                 }
             }
             //std.debug.print("pop: xoring state with {b}\n", .{mask});
@@ -323,6 +333,19 @@ const compressedStream8 = struct {
             std.debug.print("duplicate write of u64 value: {b} {}", .{ b, b });
             return error.DuplicateWrite;
         }
+        // Special-case small diffs - use 1 byte instead of 1 + (variable)
+        // this means for larger diffs we instead use 2 + (variable) bytes
+        // empirically this is ~80% of cases, so should result in improved compression
+        // (at 50 depth: 132994184 instances (133M) of 1-255 vs approx 34M of 256+ )
+        // -> result: at 50 depth, from ~2.4 bytes/item down to ~1.8 (400MB to 300MB, or 25% saving)
+        // Along with a runtime improvement of ~8% (13s to 12s)
+        // Though: the todo/frontier size increased by ~15% (4.0 to 4.6, or around 40->46 MB)
+        // -> acceptable tradeoff
+        if (diff < 256) {
+            try self.arr.append(alloc, @intCast(diff));
+            return;
+        }
+        try self.arr.append(alloc, 0);
         // compress
         // Result is big-endian, i.e. first byte must become highest-order in decompressed result
         // ASM: VPCOMPRESSB
