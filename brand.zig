@@ -356,6 +356,31 @@ const compressedStream8 = struct {
     }
 };
 
+test "compressedStream8" {
+    const alloc = std.testing.allocator;
+    var stream: compressedStream8 = .empty;
+    defer stream.deinit(alloc);
+    var w = stream.writer();
+    var r = stream.reader();
+    try std.testing.expect(r.peek() == null);
+    var next = try std.ArrayList(u64).initCapacity(alloc, 5);
+    defer next.deinit(alloc);
+
+    for (1..6) |a| {
+        const result = a * a;
+        next.appendAssumeCapacity(result);
+        try w.write(result, alloc);
+    }
+    for (next.items) |item| {
+        const pk = r.peek().?;
+        const compr = r.pop().?;
+        try std.testing.expect(pk == compr);
+        std.debug.print("expect: {}\ndecomp: {}\n", .{ item, compr });
+        try std.testing.expect(item == compr);
+    }
+    try std.testing.expect(!r.hasNext());
+}
+
 /// Backtrace path through state space given a bucketed set of state-streams and parent-actions
 fn trace_path_partitioned(alloc: std.mem.Allocator, seen_streams: []const compressedStream8, parents: []const std.ArrayList(Action), end: Board) !void {
     var b = end;
