@@ -196,6 +196,9 @@ pub fn main(init: std.process.Init) !void {
 // - ignore facing state where it's not important, to more aggressively deduplicate states
 // - bucket the todo list (frontier) and visited set as well (partition2)
 //    -> compression ratio drops from ~3.3 to ~2.4  (30% saving) in visited set
+// - improve compression in visited set ~25% (-> 1.8) by prioritizing small values
+//    -> slightly worsens compression in frontier subset
+// - avoid de/recompressing final part of visited set during merge -> no noticeable difference
 
 fn check_solution(b: Board, tilecount: usize) bool {
     var solution = false;
@@ -519,10 +522,18 @@ fn mergeStream8(alloc: std.mem.Allocator, top: u16, seen: *compressedStream8, to
             j += 1;
         }
     }
-    while (seen_r.hasNext()) { // frontier exhausted
+    if (seen_r.hasNext()) { // frontier exhausted but still have existing seen/closed set
+        // append one more through the writer to ensure state matches
         try seen_w.write(seen_r.pop().?, alloc);
         try out_par.append(alloc, seen_par.items[seen_i]);
         seen_i += 1;
+        // memcpy the rest since now the writer/compression state will be the same
+        if (seen_i < seen.len) {
+            try new_stream.arr.appendSlice(alloc, seen.arr.items[seen_r.byte_offset..]);
+            // make sure to track the length correctly
+            new_stream.len += (seen.len - seen_i);
+            try out_par.appendSlice(alloc, seen_par.items[seen_i..]);
+        }
     }
     while (j < pt.items.len) { // seen exhausted
         while (j + 1 < pt.items.len and is_duplicate(top, pt.items[j], pt.items[j + 1], pr.items[j], pr.items[j + 1])) {
