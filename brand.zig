@@ -408,18 +408,21 @@ test "compressedStream8" {
 fn trace_path_partitioned(alloc: std.mem.Allocator, seen_streams: []const compressedStream8, parents: []const std.ArrayList(Action), end: Board) !void {
     var b = end;
     var path = try std.ArrayList(Action).initCapacity(alloc, 30);
+    defer path.deinit(alloc); // we output to stdout and then don't need it anymore
     while (b != b053) {
-        // search for b in the seen list to find the matching action
-        const bin: u16 = @intCast(@as(u80, @bitCast(b)) >> 64);
-        const val: u64 = @truncate(@as(u80, @bitCast(b)));
-        var r = seen_streams[bin].reader();
-        var i: usize = 0;
-        // just linear search; bins arent expected to be that large
-        // and also we don't care that much about time here
-        while (r.pop()) |candidate| : (i += 1) {
-            if (val == candidate) break;
-        }
-        const last_action = parents[bin].items[i];
+        const last_action: Action = blk: {
+            // search for b in the seen list to find the matching action
+            const bin: u16 = @intCast(@as(u80, @bitCast(b)) >> 64);
+            const val: u64 = @truncate(@as(u80, @bitCast(b)));
+            var r = seen_streams[bin].reader();
+            var i: usize = 0;
+            // just linear search; bin size mostly follows an exponential distribution
+            // and also we don't care that much about time here
+            while (r.pop()) |candidate| : (i += 1) {
+                if (val == candidate) break :blk parents[bin].items[i];
+            }
+            @panic("Couldn't find state in visited set");
+        };
         try path.append(alloc, switch (last_action) {
             .Z => .Z,
             else => switch (b.facing) {
