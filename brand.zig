@@ -578,15 +578,15 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
                 if (i % 1000000 == 0) std.debug.print("progress = {}% {}/{} total={}\n", .{ (i * 100) / todo_len, i, todo_len, seen_len + todo_len });
                 const b: Board = @bitCast((@as(u80, @intCast(top)) << 64) | @as(u80, @intCast(low)));
                 if (b.pocket == 1) {
-                    if (check_solution(b, @popCount(b.tiles) + (b.pocket >> 1) + 1)) {
+                    if (check_solution(b, @popCount(b.tiles) + (b.pocket >> 1))) {
                         //
                         try trace_path_partitioned(alloc, seen[0..], seen_par[0..], b);
                     }
                 }
                 for (std.enums.values(Action)) |a| {
                     if (do_action(b, a)) |result| {
-                        const tilecount = @popCount(result.tiles) + (result.pocket >> 1) + 1;
-                        if (tilecount < 22) continue; // not enough tiles left for Tan
+                        const tilecount = @popCount(result.tiles) + (result.pocket >> 1);
+                        if (tilecount < tan_tot) continue; // not enough tiles left for Tan
                         // rough heuristic that we don't want to walk on these tiles
                         // so we can exclude these states entirely (not even in visited set) to save storage
                         if (result.gray == 0 or result.gray == 3 or result.gray == 4 or result.gray == 5 or result.gray == 10 or result.gray == 11 or result.gray == 16 or result.gray == 34 or result.gray == 29) continue;
@@ -604,7 +604,8 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
                         //   -> This means that any successful TAN solution
                         //      would at some point be in a situation where it could fill all remaining gaps
                         //      without breaking as many glass tiles as it is moving
-                        if (tilecount < 21 + (2 * @popCount(tan_tile & ~result.tiles) / 3)) continue;
+                        //TODO
+                        //if (tilecount < 21 + (2 * @popCount(tan_tile & ~result.tiles) / 3)) continue;
                         // needs to wait until post-sorting
                         const bin: u16 = @intCast(@as(u80, @bitCast(result)) >> 64);
                         const val: u64 = @truncate(@as(u80, @bitCast(result)));
@@ -697,21 +698,23 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
         }
         std.debug.print("{d: >5} buckets ({}%) contained between {} and {} items\n", .{ count, @as(u64, count) * 100 / 65536, last, bucket_items[65535] - 1 });
         // diff stats
-        var diffs = [_]usize{0} ** 8;
-        var diffs2 = [_]usize{0} ** 8;
-        for (seen, 0..65536) |s, _| {
-            if (s.len <= 1) continue;
-            var sr = s.reader();
-            var c = sr.pop().?;
-            while (sr.pop()) |n| {
-                const d: u64 = n ^ c;
-                c = n;
-                diffs[(63 - @clz(d)) / 8] += 1;
-                if (s.len > 128) diffs2[(63 - @clz(d)) / 8] += 1;
+        if (false) {
+            var diffs = [_]usize{0} ** 8;
+            var diffs2 = [_]usize{0} ** 8;
+            for (seen, 0..65536) |s, _| {
+                if (s.len <= 1) continue;
+                var sr = s.reader();
+                var c = sr.pop().?;
+                while (sr.pop()) |n| {
+                    const d: u64 = n ^ c;
+                    c = n;
+                    diffs[(63 - @clz(d)) / 8] += 1;
+                    if (s.len > 128) diffs2[(63 - @clz(d)) / 8] += 1;
+                }
             }
+            std.debug.print("diff distribution (xor all): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs[0], diffs[1], diffs[2], diffs[3], diffs[4], diffs[5], diffs[6], diffs[7] });
+            std.debug.print("diff distribution (len>128): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs2[0], diffs2[1], diffs2[2], diffs2[3], diffs2[4], diffs2[5], diffs2[6], diffs2[7] });
         }
-        std.debug.print("diff distribution (xor all): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs[0], diffs[1], diffs[2], diffs[3], diffs[4], diffs[5], diffs[6], diffs[7] });
-        std.debug.print("diff distribution (len>128): 1-8 {d}, 9-16 {d}, 17-24 {d}, 25-32 {d}, 33-42 {d}, etc {} {} {}\n", .{ diffs2[0], diffs2[1], diffs2[2], diffs2[3], diffs2[4], diffs2[5], diffs2[6], diffs2[7] });
 
         std.debug.print("done merge (input dupes: {}% | {}/{}), deallocating\n", .{ dupes * 100 / total, dupes, total });
         const t_dur = t_start.untilNow(io, .awake).toNanoseconds();
