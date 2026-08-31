@@ -8,7 +8,7 @@ Focused on proving (un)reachability of certain brands burdenless: <https://voids
 Current implementation is based on <https://www.snellman.net/blog/archive/2018-07-23-optimizing-breadth-first-search/>
 
 Requires `zig` 0.16.
-Run with: `zig run brand.zig -O ReleaseFast`
+Run with: `zig run bfs_move.zig -O ReleaseFast`
 
 ---
 
