@@ -80,6 +80,68 @@ const Board = packed struct(u80) {
             .pocket = b.pocket,
         };
     }
+    fn do_action(b: Board, a: Action) ?Board {
+        // prohibit bumping
+        // in this puzzle there's no need to stall; can't move any objects
+        // so it doesnt allow changing facing dir in a useful way
+        switch (a) {
+            .Z => {
+                // get the position in front (pickup/place)
+                const forward = move_by(b.gray, b.facing);
+                if (forward == b.gray) return null; // same tile denotes would bump
+                const f_tile = b.at(forward);
+                // pickup if our pocket is empty
+                // place if it is full
+                return switch (b.pocket) {
+                    0 => if (f_tile == 0) null else b.pickup(forward, f_tile),
+                    else => if (f_tile != 0) null else b.place(forward),
+                };
+            },
+            else => {
+                const new_facing: Facing = switch (a) {
+                    .U => .U,
+                    .L => .L,
+                    .R => .R,
+                    .D => .D,
+                    else => unreachable,
+                };
+                const new_pos = move_by(b.gray, new_facing);
+                return if (new_pos == b.gray) null else b.move_to(new_pos, new_facing);
+            },
+        }
+    }
+    fn reverse(b: Board, a: Action) Board {
+        switch (a) {
+            .Z => { // symmetrical
+                const forward = move_by(b.gray, b.facing);
+                if (forward == b.gray) unreachable; // same tile denotes would bump
+                const f_tile = b.at(forward);
+                // pickup if our pocket is empty
+                // place if it is full
+                return switch (b.pocket) {
+                    0 => b.pickup(forward, f_tile),
+                    else => b.place(forward),
+                };
+            },
+            else => {
+                const old_facing: Facing = switch (a) {
+                    .U => .U,
+                    .L => .L,
+                    .R => .R,
+                    .D => .D,
+                    else => unreachable,
+                };
+                const back_dir: Facing = switch (b.facing) {
+                    .U => .D,
+                    .L => .R,
+                    .R => .L,
+                    .D => .U,
+                };
+                const old_pos = move_by(b.gray, back_dir);
+                return b.unmove_from(old_pos, old_facing);
+            },
+        }
+    }
 };
 
 const Action = enum(u3) { Z, U, L, R, D };
@@ -94,70 +156,6 @@ fn move_by(p: Pos, f: Facing) Pos {
     };
     if (new_p > 34) unreachable;
     return new_p;
-}
-
-fn do_action(b: Board, a: Action) ?Board {
-    // prohibit bumping
-    // in this puzzle there's no need to stall; can't move any objects
-    // so it doesnt allow changing facing dir in a useful way
-    switch (a) {
-        .Z => {
-            // get the position in front (pickup/place)
-            const forward = move_by(b.gray, b.facing);
-            if (forward == b.gray) return null; // same tile denotes would bump
-            const f_tile = b.at(forward);
-            // pickup if our pocket is empty
-            // place if it is full
-            return switch (b.pocket) {
-                0 => if (f_tile == 0) null else b.pickup(forward, f_tile),
-                else => if (f_tile != 0) null else b.place(forward),
-            };
-        },
-        else => {
-            const new_facing: Facing = switch (a) {
-                .U => .U,
-                .L => .L,
-                .R => .R,
-                .D => .D,
-                else => unreachable,
-            };
-            const new_pos = move_by(b.gray, new_facing);
-            return if (new_pos == b.gray) null else b.move_to(new_pos, new_facing);
-        },
-    }
-}
-
-fn reverse(b: Board, a: Action) Board {
-    switch (a) {
-        .Z => { // symmetrical
-            const forward = move_by(b.gray, b.facing);
-            if (forward == b.gray) unreachable; // same tile denotes would bump
-            const f_tile = b.at(forward);
-            // pickup if our pocket is empty
-            // place if it is full
-            return switch (b.pocket) {
-                0 => b.pickup(forward, f_tile),
-                else => b.place(forward),
-            };
-        },
-        else => {
-            const old_facing: Facing = switch (a) {
-                .U => .U,
-                .L => .L,
-                .R => .R,
-                .D => .D,
-                else => unreachable,
-            };
-            const back_dir: Facing = switch (b.facing) {
-                .U => .D,
-                .L => .R,
-                .R => .L,
-                .D => .U,
-            };
-            const old_pos = move_by(b.gray, back_dir);
-            return b.unmove_from(old_pos, old_facing);
-        },
-    }
 }
 
 const add_tile: u35 = 0b100001_000110_011111_111110_011000_10000;
@@ -438,7 +436,7 @@ fn trace_path_partitioned(alloc: std.mem.Allocator, seen_streams: []const compre
                 .D => .D,
             },
         });
-        b = reverse(b, last_action);
+        b = b.reverse(last_action);
     }
     for (0..path.items.len) |j| {
         const a = path.items[path.items.len - 1 - j];
@@ -601,7 +599,7 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
                     }
                 }
                 for (std.enums.values(Action)) |a| {
-                    if (do_action(b, a)) |result| {
+                    if (b.do_action(a)) |result| {
                         const tilecount = @popCount(result.tiles) + (result.pocket >> 1);
                         if (tilecount < tan_tot) continue; // not enough tiles left for Tan
                         // rough heuristic that we don't want to walk on these tiles
