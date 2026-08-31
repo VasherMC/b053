@@ -8,6 +8,15 @@ const std = @import("std");
 
 const Facing = enum(u2) { U, L, R, D };
 const Pos = u6;
+const Tile = enum(u2) {
+    Empty = 0b00,
+    Stairs = 0b01,
+    Glass = 0b10,
+    Tile = 0b11,
+    inline fn walkable(t: Tile) u1 {
+        return @intCast(@intFromEnum(t) >> 1);
+    }
+};
 
 /// Least significant to most significant bits
 /// (important for bucketing [top 16 bits] / sorting)
@@ -16,17 +25,18 @@ const Pos = u6;
 const Board = packed struct(u80) {
     facing: Facing,
     gray: Pos,
-    pocket: u2, // empty/stairs/glass/tile
+    pocket: Tile, // empty/stairs/glass/tile
     glass: u35, // bit set = unusual (walkable->solid instead of glass, unwalkable->stairs)
     tiles: u35, // bit set = walkable (tile/glass)
 
-    fn at(b: Board, p: Pos) u2 {
+    fn at(b: Board, p: Pos) Tile {
         if (p > 34) unreachable;
-        return @as(u2, @intCast((b.glass >> p) & 1)) | @as(u2, @intCast(((b.tiles >> p) & 1) << 1));
+        return @enumFromInt(@as(u2, @intCast((b.glass >> p) & 1)) | @as(u2, @intCast(((b.tiles >> p) & 1) << 1)));
     }
 
-    fn pickup(b: Board, p: Pos, t: u2) Board { // t is non-empty
+    fn pickup(b: Board, p: Pos, t: Tile) Board { // t is non-empty
         if (p > 34) unreachable;
+        if (b.pocket != .Empty) unreachable;
         const remove_mask: u35 = @as(u35, 1) << p;
         return Board{
             .tiles = b.tiles & ~remove_mask,
@@ -40,17 +50,18 @@ const Board = packed struct(u80) {
     fn place(b: Board, p: Pos) Board {
         // guaranteed p is empty
         if (p > 34) unreachable;
+        if (b.pocket == .Empty) unreachable;
         //const mask: u35 = @as(u35, 1) << p;
         //const tile_mask = if (b.pocket > 1) mask else 0;
         //const glass_mask = if (b.pocket & 1 == 1) mask else 0;
-        const tile_mask = @as(u35, (b.pocket >> 1) & 1) << p;
-        const glass_mask = @as(u35, b.pocket & 1) << p;
+        const tile_mask = @as(u35, (@intFromEnum(b.pocket) >> 1) & 1) << p;
+        const glass_mask = @as(u35, @intFromEnum(b.pocket) & 1) << p;
         return Board{
             .tiles = b.tiles | tile_mask,
             .glass = b.glass | glass_mask,
             .gray = b.gray,
             .facing = b.facing,
-            .pocket = 0, // empty
+            .pocket = .Empty,
         };
     }
     fn move_to(b: Board, p: Pos, f: Facing) ?Board {
@@ -93,8 +104,8 @@ const Board = packed struct(u80) {
                 // pickup if our pocket is empty
                 // place if it is full
                 return switch (b.pocket) {
-                    0 => if (f_tile == 0) null else b.pickup(forward, f_tile),
-                    else => if (f_tile != 0) null else b.place(forward),
+                    .Empty => if (f_tile == .Empty) null else b.pickup(forward, f_tile),
+                    else => if (f_tile != .Empty) null else b.place(forward),
                 };
             },
             else => {
@@ -119,7 +130,7 @@ const Board = packed struct(u80) {
                 // pickup if our pocket is empty
                 // place if it is full
                 return switch (b.pocket) {
-                    0 => b.pickup(forward, f_tile),
+                    .Empty => b.pickup(forward, f_tile),
                     else => b.place(forward),
                 };
             },
@@ -141,6 +152,9 @@ const Board = packed struct(u80) {
                 return b.unmove_from(old_pos, old_facing);
             },
         }
+    }
+    fn tileCount(b: Board) u6 {
+        return @popCount(b.tiles) + b.pocket.walkable();
     }
 };
 
@@ -177,8 +191,23 @@ const b053 = Board{
     .glass = start_glass,
     .gray = 26,
     .facing = .D,
-    .pocket = 0,
+    .pocket = .Empty,
 };
+
+test "Tile" {
+    try std.testing.expect(b053.at(0) == .Glass);
+    try std.testing.expect(b053.at(1) == .Stairs);
+    try std.testing.expect(b053.at(2) == .Glass);
+    try std.testing.expect(b053.at(7) == .Empty);
+    try std.testing.expect(b053.at(26) == .Tile);
+
+    // From the 6x6 grid (36 tiles):
+    // - One is empty
+    // - One is stairs
+    // - One is covered by the rock and not included in the state
+    try std.testing.expect(b053.tileCount() == 33);
+    try std.testing.expect(b053.do_action(.Z).?.tileCount() == 33);
+}
 
 pub fn main(init: std.process.Init) !void {
     //var gpa = std.heap.DebugAllocator(.{}){};
@@ -480,7 +509,7 @@ fn is_duplicate_board(a: Board, b: Board, prev_a: Action, prev_b: Action) bool {
 fn can_Z(b: Board, prev: Action) bool {
     const fw: Pos = move_by(b.gray, b.facing);
     const tile = b.at(fw);
-    return prev != .Z and (fw != b.gray) and ((b.pocket == 0) != (tile == 0));
+    return prev != .Z and (fw != b.gray) and ((b.pocket == .Empty) != (tile == .Empty));
 }
 
 // split into function that can be parallelized
@@ -597,15 +626,15 @@ fn run_bfs_partition2(alloc: std.mem.Allocator, io: std.Io) !void {
             while (todo_r.pop()) |low| : (i += 1) {
                 if (i % 1000000 == 0) std.debug.print("progress = {}% {}/{} total={}\n", .{ (i * 100) / todo_len, i, todo_len, seen_len + todo_len });
                 const b: Board = @bitCast((@as(u80, @intCast(top)) << 64) | @as(u80, @intCast(low)));
-                if (b.pocket == 1) {
-                    if (check_solution(b, @popCount(b.tiles) + (b.pocket >> 1))) {
+                if (b.pocket == .Stairs) {
+                    if (check_solution(b, b.tileCount())) {
                         //
                         try trace_path_partitioned(alloc, seen[0..], seen_par[0..], b);
                     }
                 }
                 for (std.enums.values(Action)) |a| {
                     if (b.do_action(a)) |result| {
-                        const tilecount = @popCount(result.tiles) + (result.pocket >> 1);
+                        const tilecount = b.tileCount();
                         if (tilecount < tan_tot) continue; // not enough tiles left for Tan
                         // rough heuristic that we don't want to walk on these tiles
                         // so we can exclude these states entirely (not even in visited set) to save storage
