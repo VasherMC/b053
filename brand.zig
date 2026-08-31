@@ -6,9 +6,9 @@
 
 const std = @import("std");
 
-const Facing = enum(u2) { U, L, R, D };
-const Pos = u6;
-const Tile = enum(u2) {
+pub const Facing = enum(u2) { U, L, R, D };
+pub const Pos = u6;
+pub const Tile = enum(u2) {
     Empty = 0b00,
     Stairs = 0b01,
     Glass = 0b10,
@@ -29,14 +29,14 @@ const allow_wings: bool = blk: {
 /// (important for bucketing [top 16 bits] / sorting)
 /// having tiles as MSB cuts time at depth 38 from 30s->25s (mostly in sorting) compared to having glass as MSB
 /// having facing as LSB is important for deduplication while processing
-const Board = packed struct(u80) {
+pub const Board = packed struct(u80) {
     facing: Facing,
     gray: Pos,
     pocket: Tile, // empty/stairs/glass/tile
     glass: u35, // bit set = unusual (walkable->solid instead of glass, unwalkable->stairs)
     tiles: u35, // bit set = walkable (tile/glass)
 
-    fn at(b: Board, p: Pos) Tile {
+    pub fn at(b: Board, p: Pos) Tile {
         if (p > 34) unreachable;
         return @enumFromInt(@as(u2, @intCast((b.glass >> p) & 1)) | @as(u2, @intCast(((b.tiles >> p) & 1) << 1)));
     }
@@ -123,7 +123,7 @@ const Board = packed struct(u80) {
             .pocket = b.pocket,
         };
     }
-    fn do_action(b: Board, a: Action) ?Board {
+    pub fn do_action(b: Board, a: Action) ?Board {
         // prohibit bumping
         // in this puzzle there's no need to stall; can't move any objects
         // so it doesnt allow changing facing dir in a useful way
@@ -153,7 +153,7 @@ const Board = packed struct(u80) {
             },
         }
     }
-    fn reverse(b: Board, a: Action) Board {
+    pub fn reverse(b: Board, a: Action) Board {
         switch (a) {
             .Z => { // symmetrical
                 const forward = move_by(b.gray, b.facing);
@@ -185,14 +185,14 @@ const Board = packed struct(u80) {
             },
         }
     }
-    fn tileCount(b: Board) u6 {
+    pub fn tileCount(b: Board) u6 {
         return @popCount(b.tiles) + b.pocket.walkable();
     }
 };
 
-const Action = enum(u3) { Z, U, L, R, D };
+pub const Action = enum(u3) { Z, U, L, R, D };
 
-fn move_by(p: Pos, f: Facing) Pos {
+pub fn move_by(p: Pos, f: Facing) Pos {
     if (p > 34) unreachable;
     const new_p = switch (f) {
         .U => if (p >= 29) p else p + 6, // p+1 >= 30
@@ -204,21 +204,21 @@ fn move_by(p: Pos, f: Facing) Pos {
     return new_p;
 }
 
-const add_tile: u35 = 0b100001_000110_011111_111110_011000_10000;
-const eus_tile: u35 = 0b110011_001100_110001_111011_110111_11001;
-const bee_tile: u35 = 0b000001_001100_111001_100111_110011_11100;
-const tan_tile: u35 = 0b101101_001100_101101_110011_101101_11001;
-const lev_tile: u35 = 0b100011_001111_100100_001100_000001_11001;
-const cif_tile: u35 = 0b110001_010101_010010_101000_100100_11000;
-const SE_tile: u35 = 0b110001_101001_100110_011001_100101_10001;
+pub const add_tile: u35 = 0b100001_000110_011111_111110_011000_10000;
+pub const eus_tile: u35 = 0b110011_001100_110001_111011_110111_11001;
+pub const bee_tile: u35 = 0b000001_001100_111001_100111_110011_11100;
+pub const tan_tile: u35 = 0b101101_001100_101101_110011_101101_11001;
+pub const lev_tile: u35 = 0b100011_001111_100100_001100_000001_11001;
+pub const cif_tile: u35 = 0b110001_010101_010010_101000_100100_11000;
+pub const SE_tile: u35 = 0b110001_101001_100110_011001_100101_10001;
 
-const eus_tot = @popCount(eus_tile);
-const bee_tot = @popCount(bee_tile);
-const tan_tot = @popCount(tan_tile);
+pub const eus_tot = @popCount(eus_tile);
+pub const bee_tot = @popCount(bee_tile);
+pub const tan_tot = @popCount(tan_tile);
 
 const start_tiles = 0b111111_111111_111111_111111_111011_11101;
 const start_glass = 0b000000_001100_001000_000000_000000_00010;
-const b053 = Board{
+pub const b053 = Board{
     .tiles = start_tiles,
     .glass = start_glass,
     .gray = 26,
@@ -262,7 +262,7 @@ pub fn main(init: std.process.Init) !void {
 //    -> slightly worsens compression in frontier subset
 // - avoid de/recompressing final part of visited set during merge -> no noticeable difference
 
-fn check_solution(b: Board, tilecount: usize) bool {
+pub fn check_solution(b: Board, tilecount: usize) bool {
     var solution = false;
     if (b.tiles == add_tile) {
         std.debug.print("\n\n\n\n\nfound a solution for Add\n", .{});
@@ -518,7 +518,7 @@ const Timestamp = std.Io.Timestamp;
 /// Any of:
 ///  - They are equal
 ///  - They only differ in facing direction and facing direction does not matter
-fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool {
+pub fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool {
     if (a == b) return true;
     if ((a ^ b) > 3) return false;
     // if only facing (low 2 bits) is different, might be able to prune (board+pos+pocket is the same)
@@ -528,12 +528,14 @@ fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool 
     const bb: Board = @bitCast((@as(u80, @intCast(pi)) << 64) | @as(u80, @intCast(a)));
     return !can_Z(ab, prev_a) and !can_Z(bb, prev_b);
 }
-fn is_duplicate_board(a: Board, b: Board, prev_a: Action, prev_b: Action) bool {
+
+pub fn is_duplicate_board(a: Board, b: Board, prev_a: Action, prev_b: Action) bool {
     if (a == b) return true;
     if (@as(u80, @bitCast(a)) ^ @as(u80, @bitCast(b)) > 3) return false;
     if (prev_a == .Z and prev_b == .Z) return true; // can't Z twice in a row
     return !can_Z(a, prev_a) and !can_Z(b, prev_b);
 }
+
 /// Z action is available when:
 ///  - Previous action was not Z  (otherwise we are revisiting a previous state)
 ///  - Not facing the wall or a rock  (ie, position gray is facing is valid)
