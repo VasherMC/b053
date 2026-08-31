@@ -453,12 +453,10 @@ fn trace_path_partitioned(alloc: std.mem.Allocator, seen_streams: []const compre
 
 const Timestamp = std.Io.Timestamp;
 
-// at 27 depth: seen 40mil todo 8.8mil items -> seem 37.5ish todo 8.2ish
-// Can't just unconditionally set to a specific facing - breaks backtracking
-// need to actually deduplicate after sorting
-// Results:
-// - reduces states stored by approx 6%
-// - doesn't noticeably increase total time
+/// Check whether states are effectively duplicates
+/// Any of:
+///  - They are equal
+///  - They only differ in facing direction and facing direction does not matter
 fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool {
     if (a == b) return true;
     if ((a ^ b) > 3) return false;
@@ -466,16 +464,23 @@ fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) bool 
     // if neither can Z, we can treat them as equivalent
     if (prev_a == .Z and prev_b == .Z) return true; // can't Z twice in a row
     const ab: Board = @bitCast((@as(u80, @intCast(pi)) << 64) | @as(u80, @intCast(a)));
-    const a_fw = move_by(ab.gray, ab.facing);
-    const a_tile = ab.at(a_fw);
-    const a_can_Z = prev_a != .Z and (a_fw != ab.gray) and ((ab.pocket == 0 and a_tile != 0) or (ab.pocket != 0 and a_tile == 0));
-    if (a_can_Z) return false;
     const bb: Board = @bitCast((@as(u80, @intCast(pi)) << 64) | @as(u80, @intCast(a)));
-    const b_fw = move_by(bb.gray, bb.facing);
-    const b_tile = bb.at(b_fw);
-    const b_can_Z = prev_b != .Z and (b_fw != bb.gray) and ((bb.pocket == 0 and b_tile != 0) or (bb.pocket != 0 and b_tile == 0));
-    if (b_can_Z) return false;
-    return true;
+    return !can_Z(ab, prev_a) and !can_Z(bb, prev_b);
+}
+fn is_duplicate_board(a: Board, b: Board, prev_a: Action, prev_b: Action) bool {
+    if (a == b) return true;
+    if (@as(u80, @bitCast(a)) ^ @as(u80, @bitCast(b)) > 3) return false;
+    if (prev_a == .Z and prev_b == .Z) return true; // can't Z twice in a row
+    return !can_Z(a, prev_a) and !can_Z(b, prev_b);
+}
+/// Z action is available when:
+///  - Previous action was not Z  (otherwise we are revisiting a previous state)
+///  - Not facing the wall or a rock  (ie, position gray is facing is valid)
+///  - Exactly one of (pocket, facing position) is empty
+fn can_Z(b: Board, prev: Action) bool {
+    const fw: Pos = move_by(b.gray, b.facing);
+    const tile = b.at(fw);
+    return prev != .Z and (fw != b.gray) and ((b.pocket == 0) != (tile == 0));
 }
 
 // split into function that can be parallelized
