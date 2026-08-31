@@ -18,6 +18,13 @@ const Tile = enum(u2) {
     }
 };
 
+const wings = false;
+const allow_wings: bool = blk: {
+    const root = @import("root");
+    if (@hasDecl(root, "wings")) break :blk root.wings;
+    break :blk wings;
+};
+
 /// Least significant to most significant bits
 /// (important for bucketing [top 16 bits] / sorting)
 /// having tiles as MSB cuts time at depth 38 from 30s->25s (mostly in sorting) compared to having glass as MSB
@@ -66,7 +73,10 @@ const Board = packed struct(u80) {
     }
     fn move_to(b: Board, p: Pos, f: Facing) ?Board {
         if (p > 34) unreachable;
-        if ((b.tiles >> p) & 1 == 0) return null; // can't move to air/stairs
+        if (!allow_wings and (b.tiles >> p) & 1 == 0) return null; // can't move to air/stairs
+        if (allow_wings and b.at(p) == .Stairs) return null; // even with wings, can't move to stairs
+        // TODO/wings: either only break glass when moving off, or keep track of hovering state separately
+        // if (allow_wings and b.already_hovering and b.at(pos).walkable==0) return null;
         // if moving onto glass, remove the glass immediately (reduces bookkeeping?)
         const moving_onto_glass = (b.glass >> p) & 1 == 0;
         const remove_mask: u35 = if (moving_onto_glass) @as(u35, 1) << p else 0;
@@ -78,13 +88,35 @@ const Board = packed struct(u80) {
             .pocket = b.pocket,
         };
     }
+    /// Unmove from the position of `b` to the previous position+facing state (p, f)
+    /// unbreaking glass as necessary
     fn unmove_from(b: Board, p: Pos, f: Facing) Board {
         if (p > 34) unreachable;
+        switch (b.at(p)) {
+            .Glass, .Stairs => unreachable, // a glass tile should have been broken
+            else => {},
+        }
         // if unmoving from air, unbreak glass there
         const unmoving_from_glass = (b.tiles >> b.gray) & 1 == 0;
         const add_mask: u35 = if (unmoving_from_glass) @as(u35, 1) << b.gray else 0;
         return Board{
             .tiles = b.tiles | add_mask,
+            .glass = b.glass,
+            .gray = p,
+            .facing = f,
+            .pocket = b.pocket,
+        };
+        // Alternatively (NOT IMPLEMENTED) if unmoving back *to* air, unbreak glass there
+        // corresponds to only breaking glass when stepping *off* it
+    }
+    /// The state `b` is specifically one where gray is hovering, rather than stepped on glass
+    /// the resulting state must be a non-hovering one
+    fn unmove_from_hovering(b: Board, p: Pos, f: Facing) Board {
+        if (!allow_wings) unreachable;
+        if (p > 34) unreachable;
+        if (b.at(b.gray) != .Empty) unreachable;
+        return Board{
+            .tiles = b.tiles,
             .glass = b.glass,
             .gray = p,
             .facing = f,
