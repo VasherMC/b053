@@ -256,6 +256,8 @@ test "Tile" {
     // - One is covered by the rock and not included in the state
     try std.testing.expect(b053.tileCount() == 33);
     try std.testing.expect(b053.do_action(.Z).?.tileCount() == 33);
+    try std.testing.expect(b053.do_action(.D).?.tileCount() == 33);
+    try std.testing.expect(b053.do_action(.U).?.tileCount() == 32);
 }
 
 pub fn check_solution(b: Board, tilecount: usize) bool {
