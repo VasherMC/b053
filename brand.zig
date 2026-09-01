@@ -18,7 +18,8 @@ pub const Tile = enum(u2) {
     }
 };
 
-const wings = false;
+/// To opt-in to wings movement, declare `pub const wings = true;` in the searcher file
+pub const wings = false;
 const allow_wings: bool = blk: {
     const root = @import("root");
     if (@hasDecl(root, "wings")) break :blk root.wings;
@@ -169,7 +170,7 @@ pub const Board = packed struct(u80) {
             },
         }
     }
-    pub fn reverse(b: Board, a: Action) Board {
+    pub fn reverse(b: Board, a: Action) if (allow_wings) [2]?Board else Board {
         switch (a) {
             .Z => { // symmetrical
                 const forward = move_by(b.gray, b.facing);
@@ -177,10 +178,11 @@ pub const Board = packed struct(u80) {
                 const f_tile = b.at(forward);
                 // pickup if our pocket is empty
                 // place if it is full
-                return switch (b.pocket) {
+                const result = switch (b.pocket) {
                     .Empty => b.pickup(forward, f_tile),
                     else => b.place(forward),
                 };
+                return if (allow_wings) .{ result, null } else result;
             },
             else => {
                 const old_facing: Facing = switch (a) {
@@ -197,6 +199,7 @@ pub const Board = packed struct(u80) {
                     .D => .U,
                 };
                 const old_pos = move_by(b.gray, back_dir);
+                if (allow_wings) return .{ b.unmove_to(old_pos, old_facing), b.unmove_to_hovering(old_pos, old_facing) };
                 return b.unmove_to(old_pos, old_facing);
             },
         }

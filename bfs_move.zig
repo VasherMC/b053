@@ -1,7 +1,7 @@
 /// BFS bruteforcer for b053
 const std = @import("std");
 
-const wings = false;
+pub const wings = false;
 const brand = @import("brand.zig");
 
 const Board = brand.Board;
@@ -241,7 +241,8 @@ fn trace_path_partitioned(alloc: std.mem.Allocator, seen_streams: []const compre
                 .D => .D,
             },
         });
-        b = b.reverse(last_action);
+        const r = b.reverse(last_action);
+        b = r; // r[1] orelse r[0].?;
     }
     for (0..path.items.len) |j| {
         const a = path.items[path.items.len - 1 - j];
