@@ -32,8 +32,8 @@ const allow_wings: bool = blk: {
 pub const Board = packed struct(u80) {
     facing: Facing,
     gray: Pos,
-    pocket: Tile, // empty/stairs/glass/tile
-    glass: u35, // bit set = unusual (walkable->solid instead of glass, unwalkable->stairs)
+    pocket: Tile,
+    glass: u35, // bit set = unusual (walkable->solid instead of glass, unwalkable->stairs [or hover state])
     tiles: u35, // bit set = walkable (tile/glass)
 
     pub fn at(b: Board, p: Pos) Tile {
@@ -73,51 +73,67 @@ pub const Board = packed struct(u80) {
     }
     fn move_to(b: Board, p: Pos, f: Facing) ?Board {
         if (p > 34) unreachable;
-        if (!allow_wings and (b.tiles >> p) & 1 == 0) return null; // can't move to air/stairs
-        if (allow_wings and b.at(p) == .Stairs) return null; // even with wings, can't move to stairs
-        // TODO/wings: either only break glass when moving off, or keep track of hovering state separately
-        // if (allow_wings and b.already_hovering and b.at(pos).walkable==0) return null;
-        // if moving onto glass, remove the glass immediately (reduces bookkeeping?)
-        const moving_onto_glass = (b.glass >> p) & 1 == 0;
-        const remove_mask: u35 = if (moving_onto_glass) @as(u35, 1) << p else 0;
+        // Check if the move is allowed
+        if (allow_wings) {
+            if (b.at(p) == .Stairs) return null; // even with wings, can't move to stairs
+            // hover state is given by b.at(b.gray) == .Stairs (temporarily)
+            // b.at(b.gray) == .Empty indicates broken glass instead
+            const hovering: bool = b.at(b.gray) == .Stairs;
+            if (hovering and b.at(p) == .Empty) return null; // cannot continue hovering
+        } else {
+            if ((b.tiles >> p) & 1 == 0) return null; // can't move to unwalkable .Empty/.Stairs
+        }
+        // update the state as appropriate
+        const need_to_break_glass = (b.glass >> p) & 1 == 0; // b.at(p) == .Glass (/.Empty)
+        const remove_mask: u35 = if (need_to_break_glass) @as(u35, 1) << p else 0;
+        // hover state is stored in the 'unusual' bit of the current tile
+        // if newly hovering, mark that; if previously hovering, unmark that
+        const new_hovering = if (allow_wings and b.at(p) == .Empty) @as(u35, 1) << p else 0;
+        const old_hovering = if (allow_wings and b.at(b.gray) == .Stairs) @as(u35, 1) << b.gray else 0;
         return Board{
             .tiles = b.tiles & ~remove_mask,
-            .glass = b.glass,
+            .glass = b.glass ^ new_hovering ^ old_hovering,
             .gray = p,
             .facing = f,
             .pocket = b.pocket,
         };
     }
     /// Unmove from the position of `b` to the previous position+facing state (p, f)
-    /// unbreaking glass as necessary
-    fn unmove_from(b: Board, p: Pos, f: Facing) Board {
+    /// unbreaking glass as necessary, resulting in a grounded (non-hover) state
+    fn unmove_to(b: Board, p: Pos, f: Facing) Board {
         if (p > 34) unreachable;
         switch (b.at(p)) {
             .Glass, .Stairs => unreachable, // a glass tile should have been broken
             else => {},
         }
-        // if unmoving from air, unbreak glass there
-        const unmoving_from_glass = (b.tiles >> b.gray) & 1 == 0;
-        const add_mask: u35 = if (unmoving_from_glass) @as(u35, 1) << b.gray else 0;
+        // if unmoving from hover (stairs), replace air there
+        // if unmoving from air, unbreak glass there (since we were grounded, not hovering)
+        const unmoving_from_glass = b.at(b.gray) == .Empty;
+        const new_glass: u35 = if (unmoving_from_glass) @as(u35, 1) << b.gray else 0;
+        const unmoving_from_hover = allow_wings and b.at(b.gray) == .Stairs;
+        const remove_hover: u35 = if (unmoving_from_hover) @as(u35, 1) << b.gray else 0;
         return Board{
-            .tiles = b.tiles | add_mask,
-            .glass = b.glass,
+            .tiles = b.tiles ^ new_glass,
+            .glass = b.glass ^ remove_hover,
             .gray = p,
             .facing = f,
             .pocket = b.pocket,
         };
-        // Alternatively (NOT IMPLEMENTED) if unmoving back *to* air, unbreak glass there
-        // corresponds to only breaking glass when stepping *off* it
     }
-    /// The state `b` is specifically one where gray is hovering, rather than stepped on glass
-    /// the resulting state must be a non-hovering one
-    fn unmove_from_hovering(b: Board, p: Pos, f: Facing) Board {
+    /// The resulting state is specifically the hovering precursor to `b`
+    /// Returns `null` iff the existing state `b` is hovering, or there exists a tile there
+    fn unmove_to_hovering(b: Board, p: Pos, f: Facing) ?Board {
         if (!allow_wings) unreachable;
         if (p > 34) unreachable;
-        if (b.at(b.gray) != .Empty) unreachable;
+        if (b.at(p) == .Glass or b.at(p) == .Stairs) unreachable;
+        if (b.at(p) == .Tile) return null; // can't hover there
+        if (b.at(b.gray) == .Stairs) return null; // alredy hovering
+        const unmoving_from_glass = b.at(b.gray) == .Empty;
+        const new_glass: u35 = if (unmoving_from_glass) @as(u35, 1) << b.gray else 0;
+        const hover = @as(u35, 1) << p;
         return Board{
-            .tiles = b.tiles,
-            .glass = b.glass,
+            .tiles = b.tiles | new_glass,
+            .glass = b.glass | hover,
             .gray = p,
             .facing = f,
             .pocket = b.pocket,
@@ -181,7 +197,7 @@ pub const Board = packed struct(u80) {
                     .D => .U,
                 };
                 const old_pos = move_by(b.gray, back_dir);
-                return b.unmove_from(old_pos, old_facing);
+                return b.unmove_to(old_pos, old_facing);
             },
         }
     }
@@ -192,6 +208,7 @@ pub const Board = packed struct(u80) {
 
 pub const Action = enum(u3) { Z, U, L, R, D };
 
+/// Grid movement (prevent wrapping etc)
 pub fn move_by(p: Pos, f: Facing) Pos {
     if (p > 34) unreachable;
     const new_p = switch (f) {
