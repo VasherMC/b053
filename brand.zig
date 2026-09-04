@@ -207,6 +207,15 @@ pub const Board = packed struct(u80) {
     pub fn tileCount(b: Board) u6 {
         return @popCount(b.tiles) + b.pocket.walkable();
     }
+    /// Z action is available when:
+    ///  - Previous action was not Z  (otherwise we are revisiting a previous state)
+    ///  - Not facing the wall or a rock  (ie, position gray is facing is valid)
+    ///  - Exactly one of (pocket, facing position) is empty
+    pub fn can_Z(b: Board, prev: Action) bool {
+        const fw: Pos = move_by(b.gray, b.facing);
+        const tile = b.at(fw);
+        return prev != .Z and (fw != b.gray) and ((b.pocket == .Empty) != (tile == .Empty));
+    }
 };
 
 pub const Action = enum(u3) { Z, U, L, R, D };
@@ -303,22 +312,12 @@ pub fn is_duplicate(pi: usize, a: u64, b: u64, prev_a: Action, prev_b: Action) b
     if (prev_a == .Z and prev_b == .Z) return true; // can't Z twice in a row
     const ab: Board = @bitCast((@as(u80, @intCast(pi)) << 64) | @as(u80, @intCast(a)));
     const bb: Board = @bitCast((@as(u80, @intCast(pi)) << 64) | @as(u80, @intCast(a)));
-    return !can_Z(ab, prev_a) and !can_Z(bb, prev_b);
+    return !ab.can_Z(prev_a) and !bb.can_Z(prev_b);
 }
 
 pub fn is_duplicate_board(a: Board, b: Board, prev_a: Action, prev_b: Action) bool {
     if (a == b) return true;
     if (@as(u80, @bitCast(a)) ^ @as(u80, @bitCast(b)) > 3) return false;
     if (prev_a == .Z and prev_b == .Z) return true; // can't Z twice in a row
-    return !can_Z(a, prev_a) and !can_Z(b, prev_b);
-}
-
-/// Z action is available when:
-///  - Previous action was not Z  (otherwise we are revisiting a previous state)
-///  - Not facing the wall or a rock  (ie, position gray is facing is valid)
-///  - Exactly one of (pocket, facing position) is empty
-fn can_Z(b: Board, prev: Action) bool {
-    const fw: Pos = move_by(b.gray, b.facing);
-    const tile = b.at(fw);
-    return prev != .Z and (fw != b.gray) and ((b.pocket == .Empty) != (tile == .Empty));
+    return !a.can_Z(prev_a) and !b.can_Z(prev_b);
 }
