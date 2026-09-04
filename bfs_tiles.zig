@@ -201,6 +201,13 @@ inline fn duplicate_item_uncached(a: Item, b: Item) bool {
 fn duplicate_item(a: Item, b: Item) bool {
     return @as(u80, @bitCast(a.b)) ^ @as(u80, @bitCast(b.b)) < 4 and (a.b.facing == b.b.facing or (a.cant_z and b.cant_z));
 }
+fn duplicate_a_subset_of_b(a: Item, b: Item) bool {
+    // a.d >= b.d
+    if (a.d < b.d) unreachable;
+    // if a.cant_z then every move available to A is also available to B, so A is a duplicate
+    // however if A CAN z, and lower-depth visited state B can't, then A allows a new path (assuming facing is diff)
+    return @as(u80, @bitCast(a.b)) ^ @as(u80, @bitCast(b.b)) < 4 and (a.b.facing == b.b.facing or a.cant_z);
+}
 
 fn item_compare(a: Item, b: Item) std.math.Order {
     if (duplicate_item(a, b)) return .eq;
@@ -273,8 +280,8 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
             std.debug.print("sorting and actioning depth {}\n", .{depth});
             std.sort.pdq(Item, todo_bucket.items, {}, item_lessThan);
             processed += todo_bucket.items.len;
-            // most depth buckets past the first few have >50% duplicates
-            finalized[depth] = try .initCapacity(alloc, todo_bucket.items.len / 2);
+            // most depth buckets past the first few have ~40% duplicates
+            finalized[depth] = try .initCapacity(alloc, todo_bucket.items.len * 60 / 100);
             var dupe_amt: usize = 0;
             item: for (todo_bucket.items, 0..) |b, i| {
                 //if (b.d == 113 and !over_100) {
@@ -290,6 +297,8 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                     return;
                 }
                 if (i + 1 < todo_bucket.items.len and duplicate_item(b, todo_bucket.items[i + 1])) {
+                    if (b.cant_z) todo_bucket.items[i + 1].cant_z = true;
+                    // ^ in this case b.facing==a.facing and using Z would result in an alraedy seen state
                     if (duplicate_stats) stats_dupe_depth[0] += 1;
                     if (duplicate_stats) dupe_amt += 1;
                     continue;
@@ -307,6 +316,7 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                 try finalized[depth].append(alloc, b); // sorted
                 if (depth + 1 == MAX_DEPTH) continue;
                 for (std.enums.values(Action)) |a| {
+                    if (a == .Z and b.cant_z) continue; // we already computed this so may as well use it
                     if (b.b.do_action(a)) |result| {
                         if (result.tileCount() == tiles) {
                             if (pruning and prune(result)) continue;
