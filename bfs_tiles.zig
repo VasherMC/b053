@@ -209,8 +209,9 @@ fn duplicate_a_subset_of_b(a: Item, b: Item) bool {
     return @as(u80, @bitCast(a.b)) ^ @as(u80, @bitCast(b.b)) < 4 and (a.b.facing == b.b.facing or a.cant_z);
 }
 
+// Used only in bucket_contains below, which searches buckets of lower move depth
 fn item_compare(a: Item, b: Item) std.math.Order {
-    if (duplicate_item(a, b)) return .eq;
+    if (duplicate_a_subset_of_b(a, b)) return .eq;
     return if (@as(u80, @bitCast(a.b)) < @as(u80, @bitCast(b.b))) .lt else .gt;
 }
 fn bucket_contains(bucket: std.ArrayList(Item), x: Item) bool {
