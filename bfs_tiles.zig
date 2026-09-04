@@ -27,6 +27,7 @@ const Item = packed struct {
     b: Board,
     d: u16,
     p: Action,
+    cant_z: bool, // precompute
 };
 
 const check_solution = brand.check_solution;
@@ -194,8 +195,11 @@ fn binary_search_pages(
 
 const Timestamp = std.Io.Timestamp;
 
-inline fn duplicate_item(a: Item, b: Item) bool {
+inline fn duplicate_item_uncached(a: Item, b: Item) bool {
     return is_duplicate(a.b, b.b, a.p, b.p);
+}
+fn duplicate_item(a: Item, b: Item) bool {
+    return @as(u80, @bitCast(a.b)) ^ @as(u80, @bitCast(b.b)) < 4 and (a.b.facing == b.b.facing or (a.cant_z and b.cant_z));
 }
 
 fn item_compare(a: Item, b: Item) std.math.Order {
@@ -243,7 +247,7 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
     var todo_len: usize = 0;
     var tiles: u6 = start_tiles;
     if (start_tiles == b053.tileCount()) {
-        try todo[0].append(alloc, .{ .b = b053, .d = 0, .p = .Z });
+        try todo[0].append(alloc, .{ .b = b053, .d = 0, .p = .Z, .cant_z = false });
         todo_len = 1;
     } else {
         const file = try openFileFor(io, start_tiles);
@@ -315,7 +319,7 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                                     .R => .R,
                                     .D => .D,
                                 },
-                            } });
+                            }, .cant_z = !result.can_Z(a) });
                         }
                     }
                 }
@@ -386,7 +390,7 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                                     .R => .R,
                                     .D => .D,
                                 },
-                            } });
+                            }, .cant_z = !result.can_Z(a) });
                         }
                     }
                 }
