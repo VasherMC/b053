@@ -232,6 +232,8 @@ fn prune(result: Board) bool {
     return false;
 }
 
+const duplicate_stats = true;
+
 // Quite slow: even when limiting move depth; takes 2m to find solution for Eus
 fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
     //const t_start = Timestamp.now(io, .awake);
@@ -261,11 +263,15 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
     //var over_100 = false;
     while (tiles >= MIN_TILES) {
         var processed: usize = 0;
+        var stats_dupe_depth = if (duplicate_stats) [_]usize{0} ** MAX_DEPTH else void;
         for (&todo, 0..todo.len) |*todo_bucket, depth| {
             if (todo_bucket.items.len == 0) continue;
             std.debug.print("sorting and actioning depth {}\n", .{depth});
             std.sort.pdq(Item, todo_bucket.items, {}, item_lessThan);
             processed += todo_bucket.items.len;
+            // most depth buckets past the first few have >50% duplicates
+            finalized[depth] = try .initCapacity(alloc, todo_bucket.items.len / 2);
+            var dupe_amt: usize = 0;
             item: for (todo_bucket.items, 0..) |b, i| {
                 //if (b.d == 113 and !over_100) {
                 //    over_100 = true;
@@ -279,13 +285,20 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                     try trace_path_files(io, b, finalized[0..depth]);
                     return;
                 }
-                if (i + 1 < todo_bucket.items.len and duplicate_item(b, todo_bucket.items[i + 1])) continue;
+                if (i + 1 < todo_bucket.items.len and duplicate_item(b, todo_bucket.items[i + 1])) {
+                    if (duplicate_stats) stats_dupe_depth[0] += 1;
+                    if (duplicate_stats) dupe_amt += 1;
+                    continue;
+                }
                 // Check in previous buckets
                 for (0..depth / 2) |check| {
                     // only check every other move_depth for duplicate states due to parity
                     const check_bucket = finalized[depth - 2 - 2 * check];
-                    if (bucket_contains(check_bucket, b))
+                    if (bucket_contains(check_bucket, b)) {
+                        if (duplicate_stats) stats_dupe_depth[check + 1] += 1;
+                        if (duplicate_stats) dupe_amt += 1;
                         continue :item;
+                    }
                 }
                 try finalized[depth].append(alloc, b); // sorted
                 if (depth + 1 == MAX_DEPTH) continue;
@@ -307,6 +320,7 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
                     }
                 }
             }
+            if (duplicate_stats) std.debug.print("  dupe amount: {} / {}  ({}%)\n", .{ dupe_amt, todo_bucket.items.len, dupe_amt * 100 / todo_bucket.items.len });
             todo_bucket.clearAndFree(alloc);
         }
         total_len = 0;
@@ -314,6 +328,14 @@ fn run_bfs_tile(alloc: std.mem.Allocator, io: std.Io, start_tiles: u6) !void {
         std.debug.print("Finished generating {} states with {} tiles\n", .{ total_len, tiles });
         // About >50% are duplicates
         std.debug.print("(processed {}, pruned {} duplicates)\n", .{ processed, processed - total_len });
+        // some stats
+        if (duplicate_stats) {
+            std.debug.print("Duplicate depth difference distribution:\n", .{});
+            for (stats_dupe_depth, 0..) |count, i| {
+                if (count > 0) std.debug.print("depth diff -{}: count {}\n", .{ i * 2, count });
+            }
+            std.debug.print("\n", .{});
+        }
         // Merge all finalized runs together for output so they are no longer sorted by depth first
         //std.debug.print("merging\n", .{});
         //const merge_start = Timestamp.now(io, .awake);
